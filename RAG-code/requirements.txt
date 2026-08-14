@@ -1,0 +1,27 @@
+# ── Voice-Enabled Multilingual RAG (MSMARCO-XI) ─────────────
+# Web framework
+fastapi>=0.110
+uvicorn>=0.29
+python-dotenv>=1.0
+httpx>=0.27
+python-multipart>=0.0.9
+
+# LLM (Groq) + Speech-to-Text (Sarvam)
+groq>=0.9
+
+# Embedding + reranking (CPU, multilingual)
+sentence-transformers>=3.0
+numpy>=1.26
+
+# Vector DB
+faiss-cpu>=1.8
+
+# Hybrid BM25 keyword retrieval
+rank-bm25>=0.2
+
+# Dataset ingestion
+datasets>=2.19
+pyarrow>=15.0
+
+# Romanization (Hinglish surface for cross-lingual recall)
+indic-transliteration>=2.2
