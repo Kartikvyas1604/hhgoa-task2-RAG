@@ -21,8 +21,8 @@ export function EmptyState({ onExample }: { onExample: (q: string) => void }) {
         </h1>
         <p className="max-w-md text-sm leading-relaxed text-secondary">
           Multilingual retrieval-augmented generation. Voice in via Sarvam,
-          retrieval over a 15k-chunk FAISS index, grounded answers from Groq —
-          all under a 200ms retrieval budget.
+          retrieval over a FAISS index of MSMARCO-XI, grounded answers from Groq
+          — all under a 200ms retrieval budget.
         </p>
       </div>
 

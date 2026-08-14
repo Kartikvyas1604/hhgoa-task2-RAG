@@ -34,6 +34,21 @@ export function ChatMessage({ msg }: { msg: Msg }) {
 
   const r = msg.result;
   const refused = r?.refused;
+  const showSources =
+    !!r && r.sources.length > 0 && (!refused || r.reason === "not_grounded" || r.reason === "out_of_corpus");
+
+  const refusalText =
+    r?.reason === "unsafe_input"
+      ? "This input contains blocked content and was refused."
+      : r?.reason === "warming_up"
+        ? "The RAG models are still loading — wait a moment and try again."
+        : r?.reason === "out_of_corpus"
+          ? "This question is outside the indexed corpus (below the confidence threshold), so the system refuses to guess."
+          : r?.reason === "not_grounded"
+            ? "No grounded answer was found in the retrieved passages, so the system refuses to hallucinate. Try a question about a topic in the corpus, or rephrase it."
+            : r?.reason === "backend_unreachable"
+              ? "The RAG backend is not running."
+              : r?.answer || "Refused by safety checks.";
 
   return (
     <div className="animate-msg-in flex justify-start">
@@ -43,19 +58,7 @@ export function ChatMessage({ msg }: { msg: Msg }) {
             <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
             <div className="flex flex-col gap-0.5">
               <span className="font-medium">Guardrail blocked</span>
-              <span className="text-xs text-secondary">
-                {r?.reason === "unsafe_input"
-                  ? "This input contains blocked content and was refused."
-                  : r?.reason === "warming_up"
-                    ? "The RAG models are still loading — wait a moment and try again."
-                    : r?.reason === "out_of_corpus"
-                    ? "This question is outside the MSMARCO-XI corpus (below confidence threshold)."
-                    : r?.reason === "not_grounded"
-                      ? "No grounded answer was found in the retrieved passages."
-                      : r?.reason === "backend_unreachable"
-                        ? "The RAG backend is not running."
-                        : r?.answer || "Refused by safety checks."}
-              </span>
+              <span className="text-xs text-secondary">{refusalText}</span>
             </div>
           </div>
         ) : (
@@ -86,7 +89,7 @@ export function ChatMessage({ msg }: { msg: Msg }) {
           </div>
         )}
 
-        {!refused && r && r.sources.length > 0 && (
+        {showSources && (
           <div className="flex flex-col gap-1.5">
             <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-muted">
               <Sparkles className="h-3 w-3" aria-hidden="true" />
