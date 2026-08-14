@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    "RAG-code/.venv/**",
+    "RAG-code/msmarco_index/**",
   ]),
 ]);
 
