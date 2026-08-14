@@ -1,0 +1,19 @@
+# Secrets — NEVER commit real API keys
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Built index + artifacts (rebuilt by ingest_msmarco.py)
+msmarco_index/
+latency_report.json
+cache.pkl
+semantic_cache.pkl
+
+# OS
+.DS_Store
