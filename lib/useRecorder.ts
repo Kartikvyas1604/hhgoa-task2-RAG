@@ -84,21 +84,42 @@ export function useRecorder(): UseRecorderReturn {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     setLevel(0);
 
+    const cleanup = () => {
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      audioCtxRef.current?.close().catch(() => {});
+      streamRef.current = null;
+      audioCtxRef.current = null;
+      analyserRef.current = null;
+      setIsRecording(false);
+    };
+
+    const blob =
+      chunksRef.current.length > 0
+        ? new Blob(chunksRef.current, { type: rec.mimeType || "audio/webm" })
+        : null;
+
+    if (rec.state === "inactive") {
+      cleanup();
+      return blob;
+    }
+
     return new Promise<Blob | null>((resolve) => {
       rec.onstop = () => {
-        streamRef.current?.getTracks().forEach((t) => t.stop());
-        audioCtxRef.current?.close().catch(() => {});
-        streamRef.current = null;
-        audioCtxRef.current = null;
-        analyserRef.current = null;
-        setIsRecording(false);
-        const blob =
+        cleanup();
+        resolve(
           chunksRef.current.length > 0
-            ? new Blob(chunksRef.current, { type: rec.mimeType || "audio/webm" })
-            : null;
-        resolve(blob);
+            ? new Blob(chunksRef.current, {
+                type: rec.mimeType || "audio/webm",
+              })
+            : null
+        );
       };
-      rec.stop();
+      try {
+        rec.stop();
+      } catch {
+        cleanup();
+        resolve(blob);
+      }
     });
   }, []);
 

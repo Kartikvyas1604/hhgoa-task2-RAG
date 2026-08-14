@@ -29,13 +29,16 @@ export function Composer({
 
   const handleVoiceStart = useCallback(async () => {
     await start();
-    setWaitingForStop(true);
   }, [start]);
 
   const handleVoiceStop = useCallback(async () => {
-    const blob = await stop();
-    setWaitingForStop(false);
-    if (blob) onVoice(blob);
+    setWaitingForStop(true);
+    try {
+      const blob = await stop();
+      if (blob) await onVoice(blob);
+    } finally {
+      setWaitingForStop(false);
+    }
   }, [stop, onVoice]);
 
   return (
@@ -61,7 +64,7 @@ export function Composer({
           level={level}
           onStart={handleVoiceStart}
           onStop={handleVoiceStop}
-          disabled={busy || disabled || waitingForStop}
+          disabled={busy || disabled || (waitingForStop && !isRecording)}
         />
         <button
           type="button"
