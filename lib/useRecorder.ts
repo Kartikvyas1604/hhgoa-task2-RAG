@@ -10,12 +10,56 @@ interface UseRecorderReturn {
   stop: () => Promise<Blob | null>;
 }
 
+function writeStr(view: DataView, offset: number, str: string) {
+  for (let i = 0; i < str.length; i++) {
+    view.setUint8(offset + i, str.charCodeAt(i));
+  }
+}
+
+function buildWav(samples: Float32Array, srcRate: number): Blob {
+  const targetRate = 16000;
+  const ratio = srcRate / targetRate;
+  const newLen = Math.max(1, Math.floor(samples.length / ratio));
+  const out = new Float32Array(newLen);
+  for (let i = 0; i < newLen; i++) {
+    const idx = i * ratio;
+    const i0 = Math.floor(idx);
+    const frac = idx - i0;
+    const i1 = Math.min(i0 + 1, samples.length - 1);
+    out[i] = samples[i0] * (1 - frac) + samples[i1] * frac;
+  }
+
+  const buf = new ArrayBuffer(44 + out.length * 2);
+  const view = new DataView(buf);
+  writeStr(view, 0, "RIFF");
+  view.setUint32(4, 36 + out.length * 2, true);
+  writeStr(view, 8, "WAVE");
+  writeStr(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, targetRate, true);
+  view.setUint32(28, targetRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeStr(view, 36, "data");
+  view.setUint32(40, out.length * 2, true);
+
+  let off = 44;
+  for (let i = 0; i < out.length; i++) {
+    const s = Math.max(-1, Math.min(1, out[i]));
+    view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    off += 2;
+  }
+  return new Blob([buf], { type: "audio/wav" });
+}
+
 export function useRecorder(): UseRecorderReturn {
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const streamRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const chunksRef = useRef<Float32Array[]>([]);
   const rafRef = useRef<number | null>(null);
 
   const [isRecording, setIsRecording] = useState(false);
@@ -39,36 +83,42 @@ export function useRecorder(): UseRecorderReturn {
       });
       streamRef.current = stream;
 
-      const mimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find(
-        (t) => MediaRecorder.isTypeSupported(t)
-      ) ?? "";
-      const rec = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-      rec.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
-      };
-      mediaRecorderRef.current = rec;
-      rec.start();
-
+      let ctx: AudioContext;
       try {
-        const ctx = new AudioContext();
-        const src = ctx.createMediaStreamSource(stream);
-        const analyser = ctx.createAnalyser();
-        analyser.fftSize = 256;
-        src.connect(analyser);
-        audioCtxRef.current = ctx;
-        analyserRef.current = analyser;
-        const data = new Uint8Array(analyser.frequencyBinCount);
-        const tick = () => {
-          if (!analyserRef.current) return;
-          analyserRef.current.getByteFrequencyData(data);
-          const avg = data.reduce((a, b) => a + b, 0) / data.length;
-          setLevel(Math.min(1, avg / 180));
-          rafRef.current = requestAnimationFrame(tick);
-        };
-        tick();
+        ctx = new AudioContext({ sampleRate: 16000 });
       } catch {
-        /* analyser is optional polish */
+        ctx = new AudioContext();
       }
+      audioCtxRef.current = ctx;
+      if (ctx.state === "suspended") await ctx.resume();
+
+      const src = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+
+      const processor = ctx.createScriptProcessor(4096, 1, 1);
+      processor.onaudioprocess = (e) => {
+        const ch = e.inputBuffer.getChannelData(0);
+        chunksRef.current.push(new Float32Array(ch));
+      };
+      // Connect into a live graph without audible monitoring so the processor fires.
+      const sink = ctx.createMediaStreamDestination();
+      src.connect(analyser);
+      analyser.connect(processor);
+      processor.connect(sink);
+
+      processorRef.current = processor;
+      analyserRef.current = analyser;
+
+      const data = new Uint8Array(analyser.frequencyBinCount);
+      const tick = () => {
+        if (!analyserRef.current) return;
+        analyserRef.current.getByteFrequencyData(data);
+        const avg = data.reduce((a, b) => a + b, 0) / data.length;
+        setLevel(Math.min(1, avg / 180));
+        rafRef.current = requestAnimationFrame(tick);
+      };
+      tick();
 
       setIsRecording(true);
     } catch {
@@ -79,48 +129,36 @@ export function useRecorder(): UseRecorderReturn {
   }, []);
 
   const stop = useCallback(async (): Promise<Blob | null> => {
-    const rec = mediaRecorderRef.current;
-    if (!rec) return null;
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     setLevel(0);
 
-    const cleanup = () => {
-      streamRef.current?.getTracks().forEach((t) => t.stop());
-      audioCtxRef.current?.close().catch(() => {});
-      streamRef.current = null;
-      audioCtxRef.current = null;
-      analyserRef.current = null;
-      setIsRecording(false);
-    };
+    const ctx = audioCtxRef.current;
+    const chunks = chunksRef.current;
+    const hadAudio = chunks.length > 0;
 
-    const blob =
-      chunksRef.current.length > 0
-        ? new Blob(chunksRef.current, { type: rec.mimeType || "audio/webm" })
-        : null;
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    processorRef.current?.disconnect();
+    analyserRef.current?.disconnect();
+    audioCtxRef.current?.close().catch(() => {});
+    streamRef.current = null;
+    processorRef.current = null;
+    analyserRef.current = null;
+    audioCtxRef.current = null;
+    setIsRecording(false);
 
-    if (rec.state === "inactive") {
-      cleanup();
-      return blob;
+    if (!hadAudio || !ctx) return null;
+
+    let total = 0;
+    for (const c of chunks) total += c.length;
+    const merged = new Float32Array(total);
+    let offset = 0;
+    for (const c of chunks) {
+      merged.set(c, offset);
+      offset += c.length;
     }
 
-    return new Promise<Blob | null>((resolve) => {
-      rec.onstop = () => {
-        cleanup();
-        resolve(
-          chunksRef.current.length > 0
-            ? new Blob(chunksRef.current, {
-                type: rec.mimeType || "audio/webm",
-              })
-            : null
-        );
-      };
-      try {
-        rec.stop();
-      } catch {
-        cleanup();
-        resolve(blob);
-      }
-    });
+    const rate = ctx.sampleRate || 16000;
+    return buildWav(merged, rate);
   }, []);
 
   return { isRecording, error, level, start, stop };

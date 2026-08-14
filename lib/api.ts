@@ -33,7 +33,8 @@ export function queryRag(question: string, lang?: string, sessionId?: string) {
 
 export function voiceQuery(blob: Blob, lang?: string, sessionId?: string) {
   const fd = new FormData();
-  fd.append("file", blob, "voice.webm");
+  const ext = blob.type.includes("wav") ? "wav" : "webm";
+  fd.append("file", blob, `voice.${ext}`);
   if (lang) fd.append("lang", lang);
   if (sessionId) fd.append("session_id", sessionId);
   return fetch("/api/voice", { method: "POST", body: fd }).then(async (res) => {

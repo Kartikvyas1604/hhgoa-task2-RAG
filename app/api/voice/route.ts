@@ -27,7 +27,12 @@ export async function POST(request: Request) {
       body: out,
       cache: "no-store",
     });
-    const data = await res.json();
+    let data: unknown = null;
+    try {
+      data = await res.json();
+    } catch {
+      data = null;
+    }
     if (res.status === 503) {
       return NextResponse.json(
         {
@@ -40,7 +45,24 @@ export async function POST(request: Request) {
         { status: 200 }
       );
     }
-    return NextResponse.json(data, { status: res.status });
+    if (!res.ok) {
+      // Surface the backend error (e.g. unsupported audio format) instead of a
+      // misleading "backend unreachable" message.
+      const detail =
+        typeof data === "object" && data && "detail" in data
+          ? String((data as { detail: unknown }).detail)
+          : res.statusText;
+      return NextResponse.json(
+        {
+          answer: `Voice processing failed: ${detail}`,
+          refused: true,
+          reason: "backend_error",
+          sources: [],
+        },
+        { status: 200 }
+      );
+    }
+    return NextResponse.json(data, { status: 200 });
   } catch {
     return NextResponse.json(
       {
