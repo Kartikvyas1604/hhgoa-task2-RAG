@@ -16,4 +16,4 @@ cache.pkl
 semantic_cache.pkl
 
 # OS
-.DS_Store
+.DS_Storebenchmark_queries.jsonl
