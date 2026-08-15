@@ -58,40 +58,55 @@ def run_benchmark(pipeline=None, n=None):
     if not rows:
         return {"error": "No benchmark queries found. Run ingest_msmarco.py first."}
 
-    # Groq free tier rate-limits at ~30 requests/min; pace generation calls so
-    # the benchmark doesn't stall on 429 backoff and doesn't starve the server.
     pace = getattr(config, "BENCHMARK_PACE_SEC", 2.2)
 
     cold_total, cold_retrieval, cache_total = [], [], []
     recall_hits = 0
+    mrr_sum = 0.0
+    per_lang = {}
 
     for i, row in enumerate(rows):
         q = (row.get("query") or "").strip()
         if not q:
             continue
-        lang = detect_script(q)
+        lang = row.get("lang") or detect_script(q)
         r = pipeline.run(q, lang=lang, session_id="benchmark")
         lat = r.get("latency", {})
         stages = lat.get("stages", {})
         ret_ms = sum(stages.get(k, 0) for k in ("embed", "retrieve", "rerank"))
         cold_total.append(lat.get("total_ms", 0))
         cold_retrieval.append(ret_ms)
-        if any(s.get("is_gold") for s in r.get("sources", [])):
+
+        pl = per_lang.setdefault(lang, {"total": [], "retrieval": []})
+        pl["total"].append(lat.get("total_ms", 0))
+        pl["retrieval"].append(ret_ms)
+
+        gold_rank = None
+        for j, s in enumerate(r.get("sources", [])):
+            if s.get("is_gold"):
+                gold_rank = j + 1
+                break
+        if gold_rank is not None:
             recall_hits += 1
+            mrr_sum += 1.0 / gold_rank
         time.sleep(pace)
 
-    # Second pass → cache-hit latency (no LLM calls, so it is fast)
+    # Second pass → cache-hit latency (only true cache hits; refused/uncached
+    # queries re-run the full pipeline, which would pollute the metric)
     for i, row in enumerate(rows[: min(len(rows), n)]):
         q = (row.get("query") or "").strip()
         if not q:
             continue
-        r = pipeline.run(q, lang=detect_script(q), session_id="benchmark")
-        cache_total.append(r.get("latency", {}).get("total_ms", 0))
+        r = pipeline.run(q, lang=row.get("lang") or detect_script(q), session_id="benchmark")
+        if r.get("latency", {}).get("cached"):
+            cache_total.append(r.get("latency", {}).get("total_ms", 0))
         time.sleep(0.15)
 
+    langs_used = sorted(per_lang.keys())
     report = {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "n_queries": len(rows),
+        "languages": langs_used,
         "pipeline": {
             "retrieval_only_ms": {
                 "p50": percentile(cold_retrieval, 50),
@@ -111,9 +126,25 @@ def run_benchmark(pipeline=None, n=None):
                 "p100": percentile(cache_total, 100),
             },
         },
+        "per_language_ms": {
+            lang: {
+                "retrieval_only": {
+                    "p50": percentile(pl["retrieval"], 50),
+                    "p70": percentile(pl["retrieval"], 70),
+                    "p100": percentile(pl["retrieval"], 100),
+                },
+                "full_pipeline": {
+                    "p50": percentile(pl["total"], 50),
+                    "p70": percentile(pl["total"], 70),
+                    "p100": percentile(pl["total"], 100),
+                },
+            }
+            for lang, pl in per_lang.items()
+        },
         "accuracy": {
             "gold_recall_at_k": round(recall_hits / len(rows), 3) if rows else 0.0,
             "gold_retrieved": f"{recall_hits}/{len(rows)}",
+            "mrr_at_k": round(mrr_sum / len(rows), 3) if rows else 0.0,
         },
         "target_ms": 200,
     }

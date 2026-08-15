@@ -14,7 +14,7 @@ import numpy as np
 import config
 import ingest_msmarco as ing
 from pipeline import (
-    RagPipeline, SemanticCache, detect_script, tokenize, _sigmoid, _token_overlap,
+    RagPipeline, SemanticCache, detect_script, detect_lang, tokenize, _sigmoid, _token_overlap,
 )
 
 PASS = 0
@@ -44,9 +44,10 @@ def test_chunking():
     check("long passage gets recursively split", len(c) > 1, f"got {len(c)} chunks")
     check("every chunk under max chars", all(len(t) <= config.CHUNK_MAX_CHARS + 50 for t, _ in c))
 
-    full = ing.build_chunk_text("पाठ", "text", "paath", "उत्तर")
-    check("cross-lingual anchoring applied", "[EN]" in full and "[RO]" in full and "[ANS]" in full)
+    full = ing.build_chunk_text("पाठ", [("EN", "text"), ("RO", "paath"), ("Q", "प्रश्न")], "उत्तर")
+    check("cross-lingual anchoring applied", "[EN]" in full and "[RO]" in full and "[ANS]" in full and "[Q]" in full)
     check("romanization produces latin", ing.romanize("नमस्ते").isascii() or len(ing.romanize("नमस्ते")) > 0)
+    check("gujarati romanization works", len(ing.romanize("ગુજરાત", script="gujarati")) > 0)
 
 
 def test_guardrails():
@@ -71,7 +72,16 @@ def test_guardrails():
 
     check("devanagari → hindi", detect_script("भारत की राजधानी क्या है?") == "hi")
     check("latin → english", detect_script("what is the capital of India") == "en")
+    check("gujarati script → gu", detect_script("ગુજરાતની રાજધાની શું છે?") == "gu")
+    check("tamil script → unsupported", detect_script("இந்தியாவின் தலைநகரம் என்ன?") == "unsupported")
+    check("detect hindi", detect_lang("भारत की राजधानी क्या है?") == "hi")
+    check("detect marathi", detect_lang("मुंबईची लोकसंख्या किती आहे?") == "mr")
+    check("detect gujarati", detect_lang("ગુજરાતની રાજધાની શું છે?") == "gu")
+    check("detect english", detect_lang("what is the population of mumbai") == "en")
     check("sigmoid maps to [0,1]", 0.0 <= _sigmoid(3.0) <= 1.0)
+    gl = p.guard_language("ta")
+    check("unsupported language refused", gl["refused"] and gl["reason"] == "unsupported_language")
+    check("supported language passes", not p.guard_language("gu")["refused"])
 
 
 def test_cache():
@@ -98,7 +108,24 @@ def test_cache():
 def test_tokenize():
     print("\n[4] Tokenizer")
     check("latin + devanagari tokenized", set(tokenize("राजधानी Delhi")) == {"राजधानी", "delhi"})
+    check("gujarati tokenized", set(tokenize("રાજધાની શું છે")) == {"રાજધાની", "શું", "છે"})
     check("token overlap", _token_overlap("capital of india", "capital of india is new delhi") == 1.0)
+
+
+def test_extractive():
+    print("\n[5] Extractive fast path (query_vec)")
+    p = RagPipeline()
+    import numpy as np
+    v = np.random.rand(384).astype(np.float32)
+    v /= np.linalg.norm(v)
+    top = [({"is_gold": True, "answer": "उत्तर", "query": "प्रश्न क्या है?",
+             "query_vec": v.tolist(), "lang": "hi"}, 0.9)]
+    r = p.extractive_answer("प्रश्न क्या है?", v, top, 0.9)
+    check("extractive fires on matching query_vec", r is not None and r["answer"] == "उत्तर")
+    far = np.random.rand(384).astype(np.float32)
+    far /= np.linalg.norm(far)
+    top2 = [({"is_gold": True, "answer": "उत्तर", "query": "कुछ और", "query_vec": far.tolist(), "lang": "hi"}, 0.9)]
+    check("extractive declines on unrelated query", p.extractive_answer("प्रश्न क्या है?", v, top2, 0.9) is None)
 
 
 def main():
@@ -107,6 +134,7 @@ def main():
     test_guardrails()
     test_cache()
     test_tokenize()
+    test_extractive()
     print("\n" + "=" * 30)
     print(f"RESULT: {PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)
