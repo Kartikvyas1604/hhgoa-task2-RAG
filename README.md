@@ -71,17 +71,19 @@ M4 CPU):
 
 | Metric | p50 | p70 | p100 | avg |
 |---|---|---|---|---|
-| Retrieval only (embed+retrieve+rerank) | 175.3 ms | 187.6 ms | 211.8 ms | 151.5 ms |
-| Full pipeline (with answer generation) | 181.6 ms | 190.6 ms | 723.1 ms | 182.2 ms |
-| Cache hit | 12.2 ms | 13.0 ms | 14.0 ms | — |
+| Retrieval only (embed+retrieve+rerank) | 167.2 ms | 183.0 ms | 206.3 ms | 147.6 ms |
+| Full pipeline (with answer generation) | 177.1 ms | 189.8 ms | 8.3 s* | 385.7 ms |
+| Cache hit | 9.7 ms | 10.7 ms | 19.1 ms | — |
 
 - Retrieval is at the **~200 ms target** in every language
-  (en p50 104 ms · hi 177 ms · mr 184 ms · gu 188 ms).
+  (en p50 107 ms · hi 178 ms · mr 168 ms · gu 189 ms).
 - Accuracy did not regress with the speed cuts — **gold recall@8 = 0.925**,
   **MRR@8 = 0.823** (37/40 judged queries).
-- Full-pipeline p70 is 190.6 ms; known queries answer via the zero-LLM
-  extractive path in ~12 ms, only genuinely novel phrasings call the LLM
-  (that is the p100 tail).
+- Full-pipeline p70 is 189.8 ms; known queries answer via the zero-LLM
+  extractive path in ~10 ms, only genuinely novel phrasings call the LLM.
+
+> _*Full-pipeline p100 is a novel query needing the LLM (generation latency,
+> not retrieval). Retrieval stays ~200 ms._
 
 ---
 

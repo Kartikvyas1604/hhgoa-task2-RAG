@@ -458,7 +458,7 @@ class RagPipeline:
             sim = float(np.dot(qvec, qv)) if qv is not None else -1.0
             q_stored = (p.get("query") or "").strip()
             tok = _token_overlap(query, q_stored) if q_stored else 0.0
-            if sim >= config.MIN_GOLD_QUERY_SIM or tok >= 0.6:
+            if sim >= config.MIN_GOLD_QUERY_SIM or tok >= config.MIN_GOLD_TOKEN_OVERLAP:
                 return {
                     "answer": p["answer"],
                     "extractive": True,

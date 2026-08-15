@@ -90,7 +90,9 @@ MAX_CHUNKS_PER_SOURCE = 4     # source diversity cap per query_id
 OFF_TOPIC_THRESHOLD        = 0.30
 LOW_CONFIDENCE_THRESHOLD   = 0.45  # between threshold and here → caveated answer
 MIN_GOLD_SCORE             = 0.45  # confidence needed to use extractive gold answer
-MIN_GOLD_QUERY_SIM         = 0.85  # embedding sim (query vs stored gold query) for extractive path
+MIN_GOLD_QUERY_SIM         = 0.92  # stored gold query near-identical to user's (sim)
+MIN_GOLD_TOKEN_OVERLAP     = 0.75  # ...or near-total token overlap — both stop a wrong
+                                   # gold answer for a merely-adjacent question
 TOXIC_WORDS                = os.getenv('TOXIC_WORDS', 'kill,die,suicide,threat,fuck,sex,ass,rape,porn,violence,hate,terror').lower().split(',')
 TOXIC_SCORE_THRESHOLD      = 0.6   # optional LLM moderation score gate
 MAX_QUERY_CHARS            = 500
