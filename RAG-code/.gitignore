@@ -11,9 +11,11 @@ __pycache__/
 
 # Built index + artifacts (rebuilt by ingest_msmarco.py)
 msmarco_index/
-latency_report.json
 cache.pkl
 semantic_cache.pkl
+
+# Large dataset parquet cache (downloaded by ingest_msmarco.py)
+data/
 
 # OS
 .DS_Store
