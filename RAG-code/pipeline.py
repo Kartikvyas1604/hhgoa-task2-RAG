@@ -38,25 +38,81 @@ os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
 
 import config
 
-# ── Devanagari detection (Hindi) ─────────────────────────────
-_DEVANAGARI_RE = re.compile(r"[\u0900-\u097F]")
-_LATIN_RE = re.compile(r"[A-Za-z]")
+# ── Script detection (Hindi/Marathi/English/Gujarati + blocklist) ──
+_DEVANAGARI_RE = re.compile(r"[\u0900-\u097F]")   # hi + mr
+_GUJARATI_RE   = re.compile(r"[\u0A80-\u0AFF]")
+_LATIN_RE      = re.compile(r"[A-Za-z]")
+# Scripts of languages the model is NOT trained on → refuse politely.
+_OTHER_INDIC_RE = [
+    re.compile(r"[\u0980-\u09FF]"),   # Bengali
+    re.compile(r"[\u0B00-\u0B7F]"),   # Odia
+    re.compile(r"[\u0A00-\u0A7F]"),   # Gurmukhi (Punjabi)
+    re.compile(r"[\u0B80-\u0BFF]"),   # Tamil
+    re.compile(r"[\u0C00-\u0C7F]"),   # Telugu
+    re.compile(r"[\u0C80-\u0CFF]"),   # Kannada
+    re.compile(r"[\u0D00-\u0D7F]"),   # Malayalam
+    re.compile(r"[\u0600-\u06FF]"),   # Arabic/Urdu
+]
 
 
 def detect_script(text: str) -> str:
+    """Coarse script → one of hi|en|gu|unsupported (backward-compatible)."""
     d = len(_DEVANAGARI_RE.findall(text))
+    g = len(_GUJARATI_RE.findall(text))
     l = len(_LATIN_RE.findall(text))
-    if d > 0 and d >= l:
+    others = max((len(r.findall(text)) for r in _OTHER_INDIC_RE), default=0)
+    if g > 0 and g >= l:
+        return "gu"
+    if others > 0 and others >= l:
+        return "unsupported"
+    if d > 0:
         return "hi"
     if l > 0:
         return "en"
     return "en"
 
 
-_LANG_NAME = {"hi": "Hindi", "en": "English"}
+def detect_lang(text: str) -> str:
+    """Detect one of hi|en|gu|mr, or 'unsupported' (trained languages only)."""
+    sc = detect_script(text)
+    if sc == "gu":
+        return "gu"
+    if sc == "unsupported":
+        return "unsupported"
+    if sc == "en" and not _DEVANAGARI_RE.search(text):
+        # Latin text may be romanized Hindi/Gujarati/Marathi (Hinglish) —
+        # let langdetect decide; default English.
+        try:
+            from langdetect import detect
+            l = detect(text[:400])
+            if l in config.SUPPORTED_LANGUAGES:
+                return l
+        except Exception:
+            pass
+        return "en"
+    # Devanagari → Hindi vs Marathi via langdetect (fallback Hindi)
+    try:
+        from langdetect import detect
+        l = detect(text[:400])
+        if l in ("hi", "mr"):
+            return l
+    except Exception:
+        pass
+    return "hi"
+
+
+_LANG_NAME = {k: v for k, v in config.LANG_NAMES_EN.items()}
 _REFUSAL = {
     "hi": "मुझे इस प्रश्न का उत्तर दिए गए संदर्भ में नहीं मिला।",
     "en": "I could not find the answer to this question in the provided context.",
+    "gu": "આ પ્રશ્નનો જવાબ મને આપેલા સંદર્ભમાં મળ્યો નથી.",
+    "mr": "या प्रश्नाचे उत्तर मला दिलेल्या संदर्भात सापडले नाही.",
+}
+_LANG_UNSUPPORTED = {
+    "hi": "मैं केवल हिन्दी, अंग्रेज़ी, गुजराती और मराठी में प्रश्नों का उत्तर दे सकता हूँ।",
+    "en": "I can only answer questions in Hindi, English, Gujarati, and Marathi.",
+    "gu": "હું ફક્ત હિન્દી, અંગ્રેજી, ગુજરાતી અને મરાઠીમાં પ્રશ્નોના જવાબ આપી શકું છું.",
+    "mr": "मी फक्त हिंदी, इंग्रजी, गुजराती आणि मराठीमध्ये प्रश्नांची उत्तरे देऊ शकतो.",
 }
 
 
@@ -67,9 +123,11 @@ def _sigmoid(x: float) -> float:
         return 0.5
 
 
-# ── Tokenizer for BM25 (Latin + Devanagari) ─────────────────
+# ── Tokenizer for BM25 (Latin + Devanagari + Gujarati) ─────
 def tokenize(text: str) -> list:
-    return [t for t in re.findall(r"[\u0900-\u097F]+|[A-Za-z0-9]+", text.lower()) if len(t) > 1]
+    return [t for t in re.findall(
+        r"[\u0900-\u097F]+|[\u0A80-\u0AFF]+|[A-Za-z0-9]+", text.lower()
+    ) if len(t) > 1]
 
 
 # ── Groq client helper with retries + fallback models ───────
@@ -217,8 +275,6 @@ class RagPipeline:
             config.SEMANTIC_CACHE_SIM,
         )
         self.latency = LatencyTracker(config.LATENCY_RECORD_LIMIT)
-        self._bm25 = None
-        self._bm25_ready = False
         self._lock = threading.Lock()
 
     # ── Loading ──────────────────────────────────────────────
@@ -232,9 +288,11 @@ class RagPipeline:
                 from sentence_transformers import SentenceTransformer, CrossEncoder
                 import faiss
 
-                self.embedder = SentenceTransformer(config.EMBED_MODEL)
+                self.embedder = SentenceTransformer(config.EMBED_MODEL, device="cpu")
                 self.dim = self.embedder.get_embedding_dimension()
-                self.reranker = CrossEncoder(config.CROSS_ENCODER_MODEL, max_length=512)
+                self.reranker = CrossEncoder(config.CROSS_ENCODER_MODEL,
+                                     max_length=config.CROSS_ENCODER_MAX_LENGTH,
+                                     device="cpu")
 
                 idx_path = os.path.join(config.INDEX_DIR, "faiss.index")
                 passages_path = os.path.join(config.INDEX_DIR, "passages.pkl")
@@ -245,9 +303,8 @@ class RagPipeline:
                 self.index = faiss.read_index(idx_path)
                 with open(passages_path, "rb") as f:
                     self.passages = pickle.load(f)
-                # Pre-warm: BM25 build + first embed/rerank calls happen at
-                # startup so the FIRST user query isn't penalized by warmup.
-                self._ensure_bm25()
+                # Pre-warm: first embed/rerank calls happen at startup so the
+                # FIRST user query isn't penalized by model warmup.
                 self.embed_query("warmup query")
                 if self.passages:
                     self.rerank("warmup query", self.passages[:8])
@@ -257,18 +314,6 @@ class RagPipeline:
                 self.error = str(e)
                 return False
 
-    # ── Warm the BM25 corpus lazily ─────────────────────────
-    def _ensure_bm25(self):
-        if self._bm25_ready or not self.passages:
-            return
-        try:
-            from rank_bm25 import BM25Okapi
-            corpus = [tokenize(p["text"]) for p in self.passages]
-            self._bm25 = BM25Okapi(corpus)
-            self._bm25_ready = True
-        except Exception:
-            self._bm25_ready = False
-
     # ── Embed a query ───────────────────────────────────────
     def embed_query(self, query: str) -> np.ndarray:
         vec = self.embedder.encode(
@@ -276,27 +321,33 @@ class RagPipeline:
         )
         return np.asarray(vec[0], dtype=np.float32)
 
-    # ── Stage 1: hybrid retrieval (dense + BM25 + fusion) ───
+    # ── Stage 1: hybrid retrieval (dense pool → BM25 rescore → RRF) ──
     def retrieve(self, qvec: np.ndarray, query: str):
         t0 = time.time()
-        dense_scores, dense_idx = self.index.search(qvec.reshape(1, -1), config.VECTOR_TOP_K)
-        dense_hits = [(int(i), float(s)) for s, i in zip(dense_scores[0], dense_idx[0]) if int(i) >= 0]
+        dense_scores, dense_idx = self.index.search(qvec.reshape(1, -1), config.DENSE_POOL)
+        pool = [(int(i), float(s)) for s, i in zip(dense_scores[0], dense_idx[0]) if int(i) >= 0]
+        dense_hits = pool[: config.VECTOR_TOP_K]
 
+        # Candidate-limited BM25: build a lexical scorer over ONLY the dense
+        # pool (O(pool)) instead of the whole corpus (O(N) → 1s+ tail). This
+        # keeps the hybrid lexical signal that dense search alone misses while
+        # staying inside the 200ms latency budget.
         bm25_hits = []
-        self._ensure_bm25()
-        if self._bm25_ready:
+        tokens = tokenize(query)
+        if tokens and len(pool) >= config.VECTOR_TOP_K // 2:
             try:
-                tokens = tokenize(query)
-                if tokens:
-                    bm_scores = self._bm25.get_scores(tokens)
-                    order = np.argsort(bm_scores)[::-1][: config.BM25_TOP_K]
-                    for i in order:
-                        if bm_scores[i] >= config.BM25_SCORE_THRESHOLD:
-                            bm25_hits.append((int(i), float(bm_scores[i])))
+                from rank_bm25 import BM25Okapi
+                corpus = [tokenize(self.passages[i]["text"]) for i, _ in pool]
+                bm = BM25Okapi(corpus)
+                scores = bm.get_scores(tokens)
+                order = np.argsort(scores)[::-1][: config.BM25_TOP_K]
+                for j in order:
+                    if scores[j] >= config.BM25_SCORE_THRESHOLD:
+                        bm25_hits.append((pool[j][0], float(scores[j])))
             except Exception:
                 pass
 
-        # Reciprocal rank fusion
+        # Reciprocal rank fusion (dense + lexical within the pool)
         K = 60
         fused = {}
         for rank, (i, s) in enumerate(dense_hits):
@@ -325,7 +376,7 @@ class RagPipeline:
             return [], 0.0, time.time() - t0
 
         capped = capped[: config.RERANK_MAX_PAIRS]
-        pairs = [(query, p["text"][:1500]) for p in capped]
+        pairs = [(query, p["text"][-config.RERANK_TEXT_TAIL:]) for p in capped]
         scores = self.reranker.predict(pairs, show_progress_bar=False)
         scored = list(zip(capped, [float(s) for s in scores]))
         scored.sort(key=lambda x: x[1], reverse=True)
@@ -344,6 +395,21 @@ class RagPipeline:
                 "detail": "This request contains language the assistant is not allowed to engage with.",
             }
         return {"refused": False}
+
+    # ── Guardrail 0: language whitelist (trained languages only) ──
+    def guard_language(self, lang: str):
+        """The system is trained on hi/en/gu/mr — anything else is refused."""
+        if lang in (None, "auto"):
+            return {"refused": False, "lang": lang}
+        base = lang.split("-")[0].lower()
+        if base not in config.SUPPORTED_LANGUAGES:
+            return {
+                "refused": True,
+                "reason": "unsupported_language",
+                "lang": lang,
+                "detail": _LANG_UNSUPPORTED.get(base, _LANG_UNSUPPORTED["en"]),
+            }
+        return {"refused": False, "lang": base}
 
     # ── Guardrail 2: off-topic / out-of-corpus gate ──────────
     def guard_grounding(self, top_score: float):
@@ -377,25 +443,28 @@ class RagPipeline:
         return answer, not_grounded, time.time() - t0
 
     # ── Extractive fast path (no LLM) ────────────────────────
-    def extractive_answer(self, query: str, top: list, top_score: float):
-        """If a retrieved gold passage is both highly confident AND its source
-        query is essentially the user's query, return the stored well-formed
-        answer directly — zero LLM latency."""
+    def extractive_answer(self, query: str, qvec: np.ndarray, top: list, top_score: float):
+        """If a retrieved gold passage is confident AND its stored query is
+        (a) semantically close to the user's query (embedding sim) or
+        (b) token-overlapping, return the stored well-formed answer directly
+        — zero LLM latency. Query vectors are precomputed at ingest time, so
+        this is just a few dot-products over the reranked top."""
         if top_score < config.MIN_GOLD_SCORE:
             return None
-        best = top[0][0]
-        if not best.get("is_gold") or not best.get("answer"):
-            return None
-        q = (best.get("query") or "").strip()
-        if not q:
-            return None
-        qa = query.strip().lower()
-        if qa in q.lower() or q.lower() in qa or _token_overlap(query, q) >= 0.6:
-            return {
-                "answer": best["answer"],
-                "extractive": True,
-                "not_grounded": False,
-            }
+        for p, s in top[: config.RERANK_TOP_N]:
+            if not p.get("is_gold") or not p.get("answer"):
+                continue
+            qv = p.get("query_vec")
+            sim = float(np.dot(qvec, qv)) if qv is not None else -1.0
+            q_stored = (p.get("query") or "").strip()
+            tok = _token_overlap(query, q_stored) if q_stored else 0.0
+            if sim >= config.MIN_GOLD_QUERY_SIM or tok >= 0.6:
+                return {
+                    "answer": p["answer"],
+                    "extractive": True,
+                    "not_grounded": False,
+                    "gold_lang": p.get("lang"),
+                }
         return None
 
     # ── Main entry point ─────────────────────────────────────
@@ -422,8 +491,25 @@ class RagPipeline:
             return {"answer": g1["detail"], "refused": True, "reason": "unsafe_input",
                     "guardrails": [g1], "sources": [], "latency": entry}
 
-        if lang is None:
-            lang = detect_script(query)
+        # Guardrail 0 — language whitelist (explicit unsupported → refuse)
+        gl = self.guard_language(lang)
+        if gl["refused"]:
+            entry["refused"] = True
+            entry["total_ms"] = (time.time() - t_all) * 1000
+            self.latency.record(entry)
+            return {"answer": gl["detail"], "refused": True, "reason": "unsupported_language",
+                    "guardrails": [gl], "sources": [], "latency": entry}
+
+        # Language detection (auto) — trained languages only: hi/en/gu/mr
+        if lang is None or lang == "auto":
+            lang = detect_lang(query)
+            if lang == "unsupported":
+                msg = _LANG_UNSUPPORTED["en"]
+                entry["refused"] = True
+                entry["total_ms"] = (time.time() - t_all) * 1000
+                self.latency.record(entry)
+                return {"answer": msg, "refused": True, "reason": "unsupported_language",
+                        "sources": [], "latency": entry}
         entry["lang"] = lang
 
         # Stage: embed (also used for cache lookup)
@@ -479,7 +565,7 @@ class RagPipeline:
                     "guardrails": guardrails, "sources": sources, "latency": entry}
 
         # Extractive fast path (no LLM)
-        extr = self.extractive_answer(query, top, top_score)
+        extr = self.extractive_answer(query, qvec, top, top_score)
         if extr:
             entry["stages"]["guard"] = 1.0
             entry["total_ms"] = (time.time() - t_all) * 1000
