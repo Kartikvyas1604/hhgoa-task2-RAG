@@ -13,6 +13,13 @@ export interface Msg {
   via?: "text" | "voice";
 }
 
+const LANG_LABEL: Record<string, string> = {
+  hi: "हिन्दी",
+  en: "English",
+  gu: "ગુજરાતી",
+  mr: "मराठी",
+};
+
 export function ChatMessage({ msg }: { msg: Msg }) {
   if (msg.role === "user") {
     return (
@@ -40,15 +47,17 @@ export function ChatMessage({ msg }: { msg: Msg }) {
   const refusalText =
     r?.reason === "unsafe_input"
       ? "This input contains blocked content and was refused."
-      : r?.reason === "warming_up"
-        ? "The RAG models are still loading — wait a moment and try again."
-        : r?.reason === "out_of_corpus"
-          ? "This question is outside the indexed corpus (below the confidence threshold), so the system refuses to guess."
-          : r?.reason === "not_grounded"
-            ? "No grounded answer was found in the retrieved passages, so the system refuses to hallucinate. Try a question about a topic in the corpus, or rephrase it."
-            : r?.reason === "backend_unreachable"
-              ? "The RAG backend is not running."
-              : r?.answer || "Refused by safety checks.";
+      : r?.reason === "unsupported_language"
+        ? "This system is trained on Hindi, English, Gujarati and Marathi only — questions in other languages are refused."
+        : r?.reason === "warming_up"
+          ? "The RAG models are still loading — wait a moment and try again."
+          : r?.reason === "out_of_corpus"
+            ? "This question is outside the indexed corpus (below the confidence threshold), so the system refuses to guess."
+            : r?.reason === "not_grounded"
+              ? "No grounded answer was found in the retrieved passages, so the system refuses to hallucinate. Try a question about a topic in the corpus, or rephrase it."
+              : r?.reason === "backend_unreachable"
+                ? "The RAG backend is not running."
+                : r?.answer || "Refused by safety checks.";
 
   return (
     <div className="animate-msg-in flex justify-start">
@@ -67,6 +76,11 @@ export function ChatMessage({ msg }: { msg: Msg }) {
               <span className="flex items-center gap-1 text-[11px] font-medium text-green">
                 <Check className="h-3 w-3" aria-hidden="true" />
                 answered directly from a gold passage (no LLM call)
+              </span>
+            )}
+            {r?.latency?.lang && !refused && (
+              <span className="text-[10px] uppercase tracking-widest text-accent">
+                {LANG_LABEL[r.latency.lang] ?? r.latency.lang}
               </span>
             )}
             <p className="whitespace-pre-wrap text-sm leading-relaxed text-primary">

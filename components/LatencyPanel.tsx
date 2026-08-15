@@ -138,7 +138,21 @@ export function LatencyPanel() {
           {bench.accuracy && (
             <p className="text-[11px] text-muted">
               gold recall@k: {bench.accuracy.gold_recall_at_k ?? "—"}
+              {bench.accuracy.mrr_at_k != null && ` · MRR@k: ${bench.accuracy.mrr_at_k}`}
             </p>
+          )}
+          {bench.per_language_ms && (
+            <div className="flex flex-col gap-0.5 border-t border-border pt-1.5">
+              {Object.entries(bench.per_language_ms).map(([lang, v]) => (
+                <div key={lang} className="flex items-center justify-between text-[11px]">
+                  <span className="text-secondary">{lang.toUpperCase()}</span>
+                  <span className="font-mono text-muted">
+                    p50 {Math.round(v.full_pipeline?.p50 ?? 0)}ms · p100{" "}
+                    {Math.round(v.full_pipeline?.p100 ?? 0)}ms
+                  </span>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       )}

@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import { ArrowUp, Loader2 } from "lucide-react";
 import { MicButton } from "@/components/MicButton";
+import { LanguageSelector } from "@/components/LanguageSelector";
 import { useRecorder } from "@/lib/useRecorder";
 
 export function Composer({
@@ -10,11 +11,15 @@ export function Composer({
   onVoice,
   busy,
   disabled,
+  lang,
+  onLangChange,
 }: {
   onSend: (text: string) => void;
   onVoice: (blob: Blob) => void;
   busy: boolean;
   disabled: boolean;
+  lang: string;
+  onLangChange: (v: string) => void;
 }) {
   const [text, setText] = useState("");
   const [waitingForStop, setWaitingForStop] = useState(false);
@@ -43,6 +48,7 @@ export function Composer({
 
   return (
     <div className="flex flex-col gap-1.5">
+      <LanguageSelector value={lang} onChange={onLangChange} disabled={busy || disabled} />
       <div className="glass flex items-end gap-2 rounded-2xl border border-border p-2 focus-within:border-accent/40">
         <textarea
           value={text}

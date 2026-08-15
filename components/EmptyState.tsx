@@ -4,8 +4,8 @@ import { AudioLines, Search, ShieldCheck, Zap } from "lucide-react";
 
 const EXAMPLES = [
   "क्यूबा की मुद्रा क्या है?",
-  "हैरिसन फोर्ड के बेटे कौन हैं?",
-  "मोलासेस बाढ़ में कितने लोगों की मौत हुई?",
+  "હેરિસન ફોર્ડના દીકરા કોણ છે?",
+  "मोलासेस पूरात किती लोक मरण पावले?",
   "What is the currency of Cuba?",
 ];
 
@@ -20,9 +20,10 @@ export function EmptyState({ onExample }: { onExample: (q: string) => void }) {
           Ask MSMARCO-XI by voice or text
         </h1>
         <p className="max-w-md text-sm leading-relaxed text-secondary">
-          Multilingual retrieval-augmented generation. Voice in via Sarvam,
-          retrieval over a FAISS index of MSMARCO-XI, grounded answers from Groq
-          — all under a 200ms retrieval budget.
+          Multilingual retrieval-augmented generation — trained on Hindi,
+          English, Gujarati and Marathi. Voice in via Sarvam, retrieval over a
+          FAISS index of MSMARCO-XI, grounded answers from Groq — all under a
+          200ms retrieval budget.
         </p>
       </div>
 

@@ -25,6 +25,7 @@ export interface LatencyEntry {
   extractive?: boolean;
   refused?: boolean;
   confidence?: number;
+  lang?: string;
   stages?: StageTimings;
 }
 
@@ -54,6 +55,8 @@ export interface BackendStatus {
   error?: string | null;
   chunks?: number;
   languages?: string[];
+  language_names?: Record<string, string>;
+  language_names_en?: Record<string, string>;
   embed_model?: string;
   generation_model?: string;
   stt_model?: string;
@@ -61,12 +64,24 @@ export interface BackendStatus {
 
 export interface BenchmarkReport {
   n_queries?: number;
+  languages?: string[];
   pipeline?: {
     retrieval_only_ms?: Record<string, number>;
     full_pipeline_ms?: Record<string, number>;
     cache_hit_ms?: Record<string, number>;
   };
-  accuracy?: { gold_recall_at_k?: number; gold_retrieved?: string };
+  per_language_ms?: Record<
+    string,
+    {
+      retrieval_only?: Record<string, number>;
+      full_pipeline?: Record<string, number>;
+    }
+  >;
+  accuracy?: {
+    gold_recall_at_k?: number;
+    gold_retrieved?: string;
+    mrr_at_k?: number;
+  };
   target_ms?: number;
 }
 

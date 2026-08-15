@@ -22,6 +22,7 @@ export default function Page() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<BackendStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(true);
+  const [lang, setLang] = useState("auto");
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputBusyRef = useRef(false);
 
@@ -72,7 +73,7 @@ export default function Page() {
       setBusy(true);
       pushUser(text, "text");
       try {
-        const result = await queryRag(text, undefined, sessionId);
+        const result = await queryRag(text, lang === "auto" ? undefined : lang, sessionId);
         pushAssistant(result);
       } catch {
         pushAssistant({
@@ -86,7 +87,7 @@ export default function Page() {
         setBusy(false);
       }
     },
-    [pushUser, pushAssistant]
+    [pushUser, pushAssistant, lang]
   );
 
   const handleVoice = useCallback(
@@ -95,7 +96,7 @@ export default function Page() {
       inputBusyRef.current = true;
       setBusy(true);
       try {
-        const result = await voiceQuery(blob, undefined, sessionId);
+        const result = await voiceQuery(blob, lang === "auto" ? undefined : lang, sessionId);
         const transcript = result.transcript || "—";
         pushUser(transcript, "voice", result);
         pushAssistant(result);
@@ -112,7 +113,7 @@ export default function Page() {
         setBusy(false);
       }
     },
-    [pushUser, pushAssistant]
+    [pushUser, pushAssistant, lang]
   );
 
   const isEmpty = messages.length === 0;
@@ -176,6 +177,8 @@ export default function Page() {
           onVoice={handleVoice}
           busy={busy}
           disabled={!status?.ready}
+          lang={lang}
+          onLangChange={setLang}
         />
       </main>
 
