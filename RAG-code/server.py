@@ -60,7 +60,9 @@ async def status():
         "loading": not MODELS_LOADED and LOAD_ERROR is None,
         "error": LOAD_ERROR,
         "chunks": len(p.passages) if p.passages else 0,
-        "languages": config.LANGUAGES,
+        "languages": config.SUPPORTED_LANGUAGES,
+        "language_names": config.LANG_NAMES,
+        "language_names_en": config.LANG_NAMES_EN,
         "embed_model": config.EMBED_MODEL,
         "generation_model": config.GROQ_MODEL,
         "stt_model": config.SARVAM_STT_MODEL,
@@ -108,10 +110,24 @@ async def voice_query(
     t_all = time.time()
     stt_out = transcribe_audio(audio, file.content_type or "audio/webm")
     stt_ms = round((time.time() - t_all) * 1000, 1)
-    query_lang = lang or (stt_out.get("language_code") or "hi").split("-")[0]
+    stt_code = stt_out.get("language_code")
+    query_lang = lang or (stt_code or "").split("-")[0].lower()
+    if query_lang:
+        gl = get_pipeline().guard_language(query_lang)
+        if gl["refused"]:
+            return {
+                "answer": gl["detail"],
+                "refused": True,
+                "reason": "unsupported_language",
+                "sources": [],
+                "guardrails": [gl],
+                "transcript": stt_out["transcript"],
+                "stt_language_code": stt_code,
+                "end_to_end_ms": round((time.time() - t_all) * 1000, 1),
+            }
     result = get_pipeline().run(stt_out["transcript"], lang=query_lang, session_id=session_id, stt_ms=stt_ms)
     result["transcript"] = stt_out["transcript"]
-    result["stt_language_code"] = stt_out.get("language_code")
+    result["stt_language_code"] = stt_code
     result["end_to_end_ms"] = round((time.time() - t_all) * 1000, 1)
     return result
 
